@@ -1,4 +1,5 @@
 export interface SlackMessage {
+  type: "message";
   user: string;
   text: string;
   ts: string;
@@ -6,14 +7,18 @@ export interface SlackMessage {
 }
 
 export interface SlackThread {
+  type: "thread";
   thread_ts: string;
+  ts: string;
   date: string;
   parent_message: string;
   parent_user: string;
   reply_count: number;
-  messages: SlackMessage[];
+  replies: SlackMessage[];
   permalink: string;
 }
+
+export type ChannelItem = SlackMessage | SlackThread;
 
 export interface ChannelInfo {
   id: string;
@@ -29,8 +34,7 @@ export interface DateRange {
 export interface ExtractionResult {
   channel: ChannelInfo;
   period: string;
-  threads: SlackThread[];
-  standalone_messages: SlackMessage[];
+  messages: ChannelItem[];
   metadata: {
     extracted_at: string;
     period: string;

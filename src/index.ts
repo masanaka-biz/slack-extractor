@@ -115,7 +115,7 @@ async function main() {
       const result = await extractor.extractChannel(channel, range);
 
       // メッセージが0件の月はスキップ
-      if (result.metadata.total_messages === 0) {
+      if (result.messages.length === 0) {
         console.log(`  [${channel.name}] ${range.label} メッセージなし、スキップ`);
         continue;
       }

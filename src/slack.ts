@@ -1,6 +1,7 @@
 import { WebClient } from "@slack/web-api";
 import type {
   ChannelInfo,
+  ChannelItem,
   DateRange,
   SlackMessage,
   SlackThread,
@@ -87,6 +88,7 @@ export class SlackExtractor {
 
     const user = msg.user ? await this.resolveUser(msg.user) : "unknown";
     return {
+      type: "message" as const,
       user,
       text: msg.text ?? "",
       ts: msg.ts ?? "",
@@ -162,8 +164,9 @@ export class SlackExtractor {
       `  [${channel.name}] ${dateRange.label} メッセージ取得中...`
     );
 
-    const threads: SlackThread[] = [];
-    const standaloneMessages: SlackMessage[] = [];
+    const items: ChannelItem[] = [];
+    let totalThreads = 0;
+    let totalStandalone = 0;
     let totalMessages = 0;
     let cursor: string | undefined;
 
@@ -194,20 +197,24 @@ export class SlackExtractor {
             ? await this.resolveUser(msg.user)
             : "unknown";
 
-          threads.push({
+          items.push({
+            type: "thread",
             thread_ts: msg.ts,
+            ts: msg.ts,
             date: this.tsToDate(msg.ts),
             parent_message: msg.text ?? "",
             parent_user: parentUser,
             reply_count: replyCount,
-            messages: replies,
+            replies,
             permalink: this.buildPermalink(channel.id, msg.ts),
           });
+          totalThreads++;
         } else {
           // スレッドなしの単独メッセージ
           const slackMsg = await this.toSlackMessage(msg);
           if (slackMsg) {
-            standaloneMessages.push(slackMsg);
+            items.push(slackMsg);
+            totalStandalone++;
           }
         }
       }
@@ -216,22 +223,24 @@ export class SlackExtractor {
 
       // 進捗表示
       process.stdout.write(
-        `\r  [${channel.name}] ${dateRange.label} スレッド: ${threads.length}, 単独: ${standaloneMessages.length}, 処理済み: ${totalMessages}`
+        `\r  [${channel.name}] ${dateRange.label} スレッド: ${totalThreads}, 単独: ${totalStandalone}, 処理済み: ${totalMessages}`
       );
     } while (cursor);
 
     console.log(""); // 改行
 
+    // ts昇順でソート（時系列順）
+    items.sort((a, b) => parseFloat(a.ts) - parseFloat(b.ts));
+
     return {
       channel,
       period: dateRange.label,
-      threads,
-      standalone_messages: standaloneMessages,
+      messages: items,
       metadata: {
         extracted_at: new Date().toISOString(),
         period: dateRange.label,
-        total_threads: threads.length,
-        total_standalone_messages: standaloneMessages.length,
+        total_threads: totalThreads,
+        total_standalone_messages: totalStandalone,
         total_messages: totalMessages,
       },
     };
