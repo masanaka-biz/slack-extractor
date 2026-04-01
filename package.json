@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "extract": "tsx src/index.ts"
+    "extract": "tsx src/index.ts",
+    "sync": "tsx src/sync.ts"
   },
   "dependencies": {
     "@slack/web-api": "^7.8.0",

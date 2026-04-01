@@ -43,3 +43,13 @@ export interface ExtractionResult {
     total_messages: number;
   };
 }
+
+export interface SyncChannelState {
+  channel_id: string;
+  last_ts: string;
+  last_synced_at: string;
+}
+
+export interface SyncState {
+  channels: Record<string, SyncChannelState>;
+}

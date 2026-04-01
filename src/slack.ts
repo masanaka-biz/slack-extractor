@@ -6,6 +6,8 @@ import type {
   SlackMessage,
   SlackThread,
   ExtractionResult,
+  SyncState,
+  SyncChannelState,
 } from "./types.js";
 
 export class SlackExtractor {
@@ -103,24 +105,55 @@ export class SlackExtractor {
   ): Promise<SlackMessage[]> {
     const messages: SlackMessage[] = [];
     let cursor: string | undefined;
+    let oldest: string | undefined;
+    let hasMore = false;
 
     do {
-      const result = await this.client.conversations.replies({
+      const params: {
+        channel: string;
+        ts: string;
+        limit: number;
+        cursor?: string;
+        oldest?: string;
+      } = {
         channel: channelId,
         ts: threadTs,
         limit: 200,
-        cursor,
-      });
+      };
 
-      for (const msg of result.messages ?? []) {
+      if (cursor) {
+        params.cursor = cursor;
+      } else if (oldest) {
+        // next_cursorが返されない場合、oldestで続きを取得
+        params.oldest = oldest;
+      }
+
+      const result = await this.client.conversations.replies(params);
+      const resultMessages = result.messages ?? [];
+
+      for (const msg of resultMessages) {
+        // oldest指定時、親メッセージや既取得メッセージを重複追加しない
+        if (oldest && msg.ts && parseFloat(msg.ts) <= parseFloat(oldest)) {
+          continue;
+        }
+
         const slackMsg = await this.toSlackMessage(msg);
         if (slackMsg) {
           messages.push(slackMsg);
         }
       }
 
+      // 最後のメッセージのtsを記録（フォールバック用）
+      if (resultMessages.length > 0) {
+        const lastTs = resultMessages[resultMessages.length - 1].ts;
+        if (lastTs) {
+          oldest = lastTs;
+        }
+      }
+
       cursor = result.response_metadata?.next_cursor || undefined;
-    } while (cursor);
+      hasMore = result.has_more ?? false;
+    } while (cursor || hasMore);
 
     return messages;
   }
@@ -153,6 +186,85 @@ export class SlackExtractor {
     }
 
     return ranges;
+  }
+
+  /** チャンネルの差分メッセージを取得（oldest以降の新規メッセージ） */
+  async fetchMessagesSince(
+    channel: ChannelInfo,
+    oldest?: string
+  ): Promise<{ items: ChannelItem[]; latestTs: string }> {
+    const items: ChannelItem[] = [];
+    let latestTs = oldest ?? "0";
+    let cursor: string | undefined;
+    let totalMessages = 0;
+
+    do {
+      const params: {
+        channel: string;
+        limit: number;
+        cursor?: string;
+        oldest?: string;
+      } = {
+        channel: channel.id,
+        limit: 200,
+        cursor,
+      };
+
+      if (oldest) {
+        params.oldest = oldest;
+      }
+
+      const result = await this.client.conversations.history(params);
+
+      for (const msg of result.messages ?? []) {
+        totalMessages++;
+
+        if (msg.bot_id || msg.subtype === "bot_message") continue;
+
+        // 最新のtsを追跡
+        if (msg.ts && parseFloat(msg.ts) > parseFloat(latestTs)) {
+          latestTs = msg.ts;
+        }
+
+        const replyCount = msg.reply_count ?? 0;
+
+        if (replyCount > 0 && msg.ts) {
+          const replies = await this.getThreadReplies(channel.id, msg.ts);
+          const parentUser = msg.user
+            ? await this.resolveUser(msg.user)
+            : "unknown";
+
+          items.push({
+            type: "thread",
+            thread_ts: msg.ts,
+            ts: msg.ts,
+            date: this.tsToDate(msg.ts),
+            parent_message: msg.text ?? "",
+            parent_user: parentUser,
+            reply_count: replyCount,
+            replies,
+            permalink: this.buildPermalink(channel.id, msg.ts),
+          });
+        } else {
+          const slackMsg = await this.toSlackMessage(msg);
+          if (slackMsg) {
+            items.push(slackMsg);
+          }
+        }
+      }
+
+      cursor = result.response_metadata?.next_cursor || undefined;
+      process.stdout.write(
+        `\r  [${channel.name}] 差分取得中... ${totalMessages}件処理`
+      );
+    } while (cursor);
+
+    console.log("");
+
+    // ts昇順でソート
+    items.sort((a, b) => parseFloat(a.ts) - parseFloat(b.ts));
+
+    return { items, latestTs };
   }
 
   /** チャンネルの指定期間のメッセージ・スレッドを取得 */
